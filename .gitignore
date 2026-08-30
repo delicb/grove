@@ -1,0 +1,7 @@
+/bin/
+/dist/
+/grove
+*.test
+*.out
+coverage.out
+.DS_Store
