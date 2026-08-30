@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/del-boy/grove/internal/model"
 	"github.com/del-boy/grove/internal/size"
@@ -50,6 +51,10 @@ func (service *Service) List(ctx context.Context, options ListOptions) (model.Re
 				Complete:   measurement.Complete,
 				MeasuredAt: measuredAt,
 			}); err != nil {
+				if errors.Is(err, store.ErrNotActive) || errors.Is(err, store.ErrNotFound) {
+					result.Warnings = append(result.Warnings, sizeRefreshSkippedIssue(worktrees[index]))
+					continue
+				}
 				return result, storeError("Grove could not store a worktree size.", err)
 			}
 			bytes := measurement.Bytes

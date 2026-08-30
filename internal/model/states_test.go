@@ -226,6 +226,7 @@ func TestStableCodes(t *testing.T) {
 		"worktree_missing",
 		"recovery_manual_review",
 		"size_incomplete",
+		"size_refresh_skipped",
 		"file_disappeared",
 		"permission_denied",
 		"cleanup_recent",

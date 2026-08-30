@@ -101,6 +101,7 @@ const (
 	IssueWorktreeMissing      IssueCode = "worktree_missing"
 	IssueRecoveryManualReview IssueCode = "recovery_manual_review"
 	IssueSizeIncomplete       IssueCode = "size_incomplete"
+	IssueSizeRefreshSkipped   IssueCode = "size_refresh_skipped"
 	IssueFileDisappeared      IssueCode = "file_disappeared"
 	IssuePermissionDenied     IssueCode = "permission_denied"
 	IssueCleanupRecent        IssueCode = "cleanup_recent"
@@ -118,6 +119,7 @@ var issueCodes = []IssueCode{
 	IssueWorktreeMissing,
 	IssueRecoveryManualReview,
 	IssueSizeIncomplete,
+	IssueSizeRefreshSkipped,
 	IssueFileDisappeared,
 	IssuePermissionDenied,
 	IssueCleanupRecent,

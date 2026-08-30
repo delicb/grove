@@ -1409,6 +1409,162 @@ func TestCleanupChecksOperationLockImmediatelyBeforeGitRemoval(t *testing.T) {
 	}
 }
 
+type sizeRefreshRaceStore struct {
+	Store
+	worktreeID int64
+	flip       func(context.Context) error
+	flipped    bool
+}
+
+func (racing *sizeRefreshRaceStore) UpdateSize(ctx context.Context, update store.SizeUpdate) error {
+	if update.WorktreeID == racing.worktreeID && !racing.flipped {
+		racing.flipped = true
+		if err := racing.flip(ctx); err != nil {
+			return err
+		}
+	}
+	return racing.Store.UpdateSize(ctx, update)
+}
+
+type sizeUpdateFailStore struct {
+	Store
+	worktreeID int64
+	failWith   error
+}
+
+func (failing *sizeUpdateFailStore) UpdateSize(ctx context.Context, update store.SizeUpdate) error {
+	if update.WorktreeID == failing.worktreeID {
+		return failing.failWith
+	}
+	return failing.Store.UpdateSize(ctx, update)
+}
+
+func findIssue(issues []model.Issue, code model.IssueCode) (model.Issue, bool) {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return issue, true
+		}
+	}
+	return model.Issue{}, false
+}
+
+func TestListRefreshSizeSkipsWorktreeReservedForRemoval(t *testing.T) {
+	testutil.IsolateGit(t)
+	repository := testutil.NewRepository(t)
+	fixture := newAppFixture(t, repository.Path)
+	skipped, err := fixture.service.Create(context.Background(), CreateOptions{Name: "refresh-skipped", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := fixture.service.Create(context.Background(), CreateOptions{Name: "refresh-kept", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Data.Worktree.SizeMeasuredAt == nil {
+		t.Fatalf("created worktree has no size measurement: %#v", skipped.Data.Worktree)
+	}
+	gitDirectory := worktreeGitDirectory(t, fixture, skipped.Data.Worktree.Path)
+	fixture.now = fixture.now.Add(31 * 24 * time.Hour)
+	fixture.service.store = &sizeRefreshRaceStore{
+		Store:      fixture.store,
+		worktreeID: skipped.Data.Worktree.ID,
+		flip: func(ctx context.Context) error {
+			_, err := fixture.store.ReserveRemoval(ctx, store.RemoveReservation{
+				WorktreeID:         skipped.Data.Worktree.ID,
+				OperationToken:     "refresh-race-token",
+				OperationStartedAt: fixture.now,
+				ObservedActivityAt: skipped.Data.Worktree.LastGroveActivityAt,
+				CutoffAt:           fixture.now.Add(-30 * 24 * time.Hour),
+				Reason:             model.RemovalReasonOldAndClean,
+				GitDirectory:       gitDirectory,
+			})
+			return err
+		},
+	}
+
+	result, err := fixture.service.List(context.Background(), ListOptions{RefreshSize: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warning, found := findIssue(result.Warnings, model.IssueSizeRefreshSkipped)
+	if !found || warning.Path == nil || *warning.Path != skipped.Data.Worktree.Path ||
+		warning.WorktreeID == nil || *warning.WorktreeID != skipped.Data.Worktree.ID {
+		t.Errorf("size refresh warning = %#v, %t", warning, found)
+	}
+	listed := map[int64]model.Worktree{}
+	for _, worktree := range result.Data.Worktrees {
+		listed[worktree.ID] = worktree
+	}
+	skippedRow := listed[skipped.Data.Worktree.ID]
+	if skippedRow.SizeMeasuredAt == nil || !skippedRow.SizeMeasuredAt.Equal(*skipped.Data.Worktree.SizeMeasuredAt) {
+		t.Errorf("skipped measurement time = %v, want %v", skippedRow.SizeMeasuredAt, skipped.Data.Worktree.SizeMeasuredAt)
+	}
+	keptRow := listed[kept.Data.Worktree.ID]
+	if keptRow.SizeMeasuredAt == nil || !keptRow.SizeMeasuredAt.Equal(fixture.now) {
+		t.Errorf("kept measurement time = %v, want %v", keptRow.SizeMeasuredAt, fixture.now)
+	}
+	stored, err := fixture.store.Get(context.Background(), skipped.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != model.WorktreeStateRemoving {
+		t.Errorf("skipped worktree state = %q", stored.State)
+	}
+	if stored.SizeMeasuredAt == nil || !stored.SizeMeasuredAt.Equal(*skipped.Data.Worktree.SizeMeasuredAt) {
+		t.Errorf("stored skipped measurement time = %v, want %v", stored.SizeMeasuredAt, skipped.Data.Worktree.SizeMeasuredAt)
+	}
+}
+
+func TestStatsRefreshSkipsWorktreeThatLeftActiveState(t *testing.T) {
+	testutil.IsolateGit(t)
+	repository := testutil.NewRepository(t)
+	fixture := newAppFixture(t, repository.Path)
+	skipped, err := fixture.service.Create(context.Background(), CreateOptions{Name: "stats-skipped", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := fixture.service.Create(context.Background(), CreateOptions{Name: "stats-kept", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Data.Worktree.SizeMeasuredAt == nil {
+		t.Fatalf("created worktree has no size measurement: %#v", skipped.Data.Worktree)
+	}
+	fixture.service.store = &sizeUpdateFailStore{
+		Store:      fixture.store,
+		worktreeID: skipped.Data.Worktree.ID,
+		failWith:   store.ErrNotFound,
+	}
+	fixture.now = fixture.now.Add(time.Hour)
+
+	result, err := fixture.service.Stats(context.Background(), StatsOptions{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warning, found := findIssue(result.Warnings, model.IssueSizeRefreshSkipped)
+	if !found || warning.Path == nil || *warning.Path != skipped.Data.Worktree.Path ||
+		warning.WorktreeID == nil || *warning.WorktreeID != skipped.Data.Worktree.ID {
+		t.Errorf("size refresh warning = %#v, %t", warning, found)
+	}
+	if result.Data.Active != 2 {
+		t.Errorf("active count = %d", result.Data.Active)
+	}
+	storedSkipped, err := fixture.store.Get(context.Background(), skipped.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedSkipped.SizeMeasuredAt == nil || !storedSkipped.SizeMeasuredAt.Equal(*skipped.Data.Worktree.SizeMeasuredAt) {
+		t.Errorf("skipped measurement time = %v, want %v", storedSkipped.SizeMeasuredAt, skipped.Data.Worktree.SizeMeasuredAt)
+	}
+	storedKept, err := fixture.store.Get(context.Background(), kept.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedKept.SizeMeasuredAt == nil || !storedKept.SizeMeasuredAt.Equal(fixture.now) {
+		t.Errorf("kept measurement time = %v, want %v", storedKept.SizeMeasuredAt, fixture.now)
+	}
+}
+
 func TestParseAge(t *testing.T) {
 	for value, want := range map[string]time.Duration{
 		"1h":  time.Hour,
