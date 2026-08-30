@@ -82,8 +82,8 @@ func ParseWorktreePorcelain(data []byte) ([]model.GitWorktree, error) {
 			current.bare = true
 		case field == "locked" || strings.HasPrefix(field, "locked "):
 			current.locked = true
-		case field == "prunable" || strings.HasPrefix(field, "prunable "):
 		default:
+			// Ignore prunable annotations and any unrecognized fields.
 		}
 	}
 	if current != nil {
