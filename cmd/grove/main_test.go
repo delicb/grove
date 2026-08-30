@@ -39,7 +39,7 @@ func TestBlackBoxCLIWorkflow(t *testing.T) {
 	}
 	temporary := t.TempDir()
 	binary := filepath.Join(temporary, "grove")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/grove")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "./cmd/grove")
 	build.Dir = root
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, output)
@@ -74,6 +74,12 @@ func TestBlackBoxCLIWorkflow(t *testing.T) {
 	assertExitAndStreams(t, versionResult, 0, false)
 	if string(versionResult.stdout) != "grove dev\n" {
 		t.Errorf("version stdout = %q", versionResult.stdout)
+	}
+
+	versionFlagResult := runCommand(t, binary, environment, "--version")
+	assertExitAndStreams(t, versionFlagResult, 0, false)
+	if string(versionFlagResult.stdout) != "grove dev\n" {
+		t.Errorf("--version stdout = %q", versionFlagResult.stdout)
 	}
 
 	repositoryOne := newRepository(t, temporary, environment, "repository one")

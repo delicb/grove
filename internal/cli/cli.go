@@ -32,14 +32,15 @@ type Options struct {
 }
 
 type commandTree struct {
-	ConfigFile *string        `name:"config" help:"Use this configuration file." placeholder:"path"`
-	Create     createCommand  `cmd:"" help:"Create a managed worktree."`
-	List       listCommand    `cmd:"" help:"List managed worktrees."`
-	Touch      touchCommand   `cmd:"" help:"Update Grove activity for a managed worktree."`
-	Stats      statsCommand   `cmd:"" help:"Show managed worktree statistics."`
-	Cleanup    cleanupCommand `cmd:"" help:"Remove old clean worktrees. Run grove touch when you resume work."`
-	Config     configCommand  `cmd:"" help:"Inspect the effective configuration."`
-	Version    versionCommand `cmd:"" help:"Show the Grove version."`
+	ConfigFile  *string          `name:"config" help:"Use this configuration file." placeholder:"path"`
+	VersionFlag kong.VersionFlag `name:"version" help:"Show the Grove version."`
+	Create      createCommand    `cmd:"" help:"Create a managed worktree."`
+	List        listCommand      `cmd:"" help:"List managed worktrees."`
+	Touch       touchCommand     `cmd:"" help:"Update Grove activity for a managed worktree."`
+	Stats       statsCommand     `cmd:"" help:"Show managed worktree statistics."`
+	Cleanup     cleanupCommand   `cmd:"" help:"Remove old clean worktrees. Run grove touch when you resume work."`
+	Config      configCommand    `cmd:"" help:"Inspect the effective configuration."`
+	Version     versionCommand   `cmd:"" help:"Show the Grove version."`
 }
 
 type createCommand struct {
@@ -127,6 +128,7 @@ func Run(ctx context.Context, args []string, options Options) (exitCode int) {
 		kong.Writers(options.Stdout, options.Stderr),
 		kong.Exit(func(code int) { panic(kongExit(code)) }),
 		kong.ConfigureHelp(kong.HelpOptions{Compact: true}),
+		kong.Vars{"version": "grove " + options.Version},
 	)
 	if err != nil {
 		return application.writeError(commandFromArgs(args), jsonRequested(args), output.DomainError(err))
