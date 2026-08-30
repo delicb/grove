@@ -135,10 +135,13 @@ type Manager interface {
     TryOperation(token string) (Lock, bool, error)
     AcquireBootstrap(worktreeID int64) (Lock, error)
     TryBootstrap(worktreeID int64) (Lock, bool, error)
+    SweepOperations(inUse func(token string) bool)
 }
 ```
 
 A lock owner must call `Unlock` after it commits the terminal state.
+
+`SweepOperations` removes stale operation lock files. It never touches bootstrap lock files because bootstrap lock names repeat across runs.
 
 ### 5.4 Clock
 
