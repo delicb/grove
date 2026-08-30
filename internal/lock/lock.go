@@ -22,7 +22,6 @@ const (
 type Lock interface {
 	Unlock() error
 	Owned() bool
-	Locked() bool
 	Path() string
 }
 
@@ -73,10 +72,6 @@ func NewManager(directory string) (*FileManager, error) {
 		return nil, fmt.Errorf("protect lock directory: %w", err)
 	}
 	return &FileManager{directory: filepath.Clean(canonical)}, nil
-}
-
-func New(directory string) (*FileManager, error) {
-	return NewManager(directory)
 }
 
 func (manager *FileManager) Directory() string {
@@ -177,10 +172,6 @@ func (lock *fileLock) Owned() bool {
 	lock.mu.Lock()
 	defer lock.mu.Unlock()
 	return lock.owned && lock.flock.Locked()
-}
-
-func (lock *fileLock) Locked() bool {
-	return lock.Owned()
 }
 
 func (lock *fileLock) Path() string {

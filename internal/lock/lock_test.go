@@ -27,7 +27,7 @@ func TestOperationAndBootstrapLocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !operation.Owned() || !operation.Locked() {
+	if !operation.Owned() {
 		t.Fatal("acquired operation lock is not owned")
 	}
 	wantOperationPath := filepath.Join(first.Directory(), "operation-token.lock")

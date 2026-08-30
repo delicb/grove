@@ -17,13 +17,9 @@ func (service *Service) Recover(ctx context.Context) ([]model.Issue, error) {
 	if err != nil {
 		return nil, storeError("Grove could not read incomplete operations.", err)
 	}
-	repositories, err := service.store.Repositories(ctx, store.RepositoryFilter{})
+	repositoryByID, err := service.repositoriesByID(ctx, "Grove could not read repositories for recovery.")
 	if err != nil {
-		return nil, storeError("Grove could not read repositories for recovery.", err)
-	}
-	repositoryByID := make(map[int64]model.Repository, len(repositories))
-	for _, repository := range repositories {
-		repositoryByID[repository.ID] = repository
+		return nil, err
 	}
 
 	for _, worktree := range recoverable {
@@ -191,25 +187,11 @@ func (service *Service) findGitWorktree(ctx context.Context, repository model.Re
 	if repository.ID == 0 || repository.CommonDir == "" {
 		return model.GitWorktree{}, false, errors.New("repository record is missing")
 	}
-	worktrees, err := service.git.ListWorktrees(ctx, model.RepositoryInfo{
+	return service.findGitWorktreeForInfo(ctx, model.RepositoryInfo{
 		CommonDir:    repository.CommonDir,
 		MainCheckout: repository.MainCheckout,
 		DisplayName:  repository.DisplayName,
-	})
-	if err != nil {
-		return model.GitWorktree{}, false, err
-	}
-	for _, worktree := range worktrees {
-		if samePath(worktree.Path, target) {
-			gitDirectory, err := service.git.WorktreeGitDirectory(ctx, target)
-			if err != nil {
-				return model.GitWorktree{}, false, err
-			}
-			worktree.GitDirectory = gitDirectory
-			return worktree, true, nil
-		}
-	}
-	return model.GitWorktree{}, false, nil
+	}, target)
 }
 
 func worktreeDirectoryPresent(path string) (bool, error) {
