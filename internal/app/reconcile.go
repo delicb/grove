@@ -16,13 +16,9 @@ func (service *Service) Reconcile(ctx context.Context) ([]model.Issue, error) {
 	if err != nil {
 		return nil, storeError("Grove could not read worktrees for reconciliation.", err)
 	}
-	repositories, err := service.store.Repositories(ctx, store.RepositoryFilter{})
+	repositoryByID, err := service.repositoriesByID(ctx, "Grove could not read repositories for reconciliation.")
 	if err != nil {
-		return nil, storeError("Grove could not read repositories for reconciliation.", err)
-	}
-	repositoryByID := make(map[int64]model.Repository, len(repositories))
-	for _, repository := range repositories {
-		repositoryByID[repository.ID] = repository
+		return nil, err
 	}
 	grouped := make(map[int64][]model.Worktree)
 	for _, worktree := range worktrees {

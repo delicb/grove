@@ -201,30 +201,6 @@ func IsChild(root, target string) bool {
 	return filepath.Clean(rootAbsolute) != filepath.Clean(targetAbsolute)
 }
 
-func RequireContained(root, target string) error {
-	if root == "" || target == "" {
-		return invalidPath("The root and target paths must not be empty.", nil)
-	}
-	if err := ValidateUTF8(root); err != nil {
-		return err
-	}
-	if err := ValidateUTF8(target); err != nil {
-		return err
-	}
-	if !Contains(root, target) {
-		err := model.NewError(
-			model.ErrorTargetOutsideRoot,
-			model.ExitConflict,
-			"The target path is outside the managed root.",
-			nil,
-		)
-		err.Details["root"] = root
-		err.Details["path"] = target
-		return err
-	}
-	return nil
-}
-
 func absolutePath(path string) (string, error) {
 	if err := ValidateUTF8(path); err != nil {
 		return "", err

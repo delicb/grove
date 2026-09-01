@@ -41,13 +41,6 @@ type WorktreeStatus struct {
 	Ignored   bool `json:"ignored"`
 }
 
-func (status WorktreeStatus) Clean(allowIgnored bool) bool {
-	if status.Staged || status.Modified || status.Untracked {
-		return false
-	}
-	return allowIgnored || !status.Ignored
-}
-
 type Worktree struct {
 	ID                  int64          `json:"id"`
 	RepositoryID        int64          `json:"repository_id"`

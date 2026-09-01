@@ -59,10 +59,6 @@ func NewClient() *CommandClient {
 	return NewClientWithExecutable("git")
 }
 
-func New() *CommandClient {
-	return NewClient()
-}
-
 func NewClientWithExecutable(executable string) *CommandClient {
 	if executable == "" {
 		executable = "git"

@@ -150,10 +150,6 @@ func (config Config) LockDir() string {
 	return filepath.Join(config.DataDir, LocksDirectoryName)
 }
 
-func (config Config) BootstrapEnabled() bool {
-	return config.BootstrapScript != ""
-}
-
 func (config *Config) EnsureDataDirs() error {
 	if err := os.MkdirAll(config.DataDir, 0o700); err != nil {
 		return invalidConfig("Grove could not create the data directory.", err, config.ConfigPath)

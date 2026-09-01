@@ -196,6 +196,44 @@ func (runner *runner) run(ctx context.Context, command string) int {
 	}
 }
 
+type serviceCommand[Data any] struct {
+	name            string
+	jsonMode        bool
+	bootstrapScript *string
+	noBootstrap     bool
+	invoke          func(context.Context, *app.Service) (model.Result[Data], error)
+	writeHuman      func(io.Writer, Data) error
+	exitCode        func(model.Result[Data]) int
+}
+
+func runServiceCommand[Data any](ctx context.Context, runner *runner, command serviceCommand[Data]) int {
+	service, err := runner.openService(ctx, command.jsonMode, command.bootstrapScript, command.noBootstrap)
+	if err != nil {
+		return runner.writeError(command.name, command.jsonMode, err)
+	}
+	result, commandErr := command.invoke(ctx, service)
+	commandErr = closeService(service, commandErr)
+	if commandErr != nil {
+		return runner.writeError(command.name, command.jsonMode, commandErr)
+	}
+	if command.jsonMode {
+		if err := output.WriteJSON(runner.options.Stdout, result); err != nil {
+			return model.ExitInternal
+		}
+	} else {
+		if err := command.writeHuman(runner.options.Stdout, result.Data); err != nil {
+			return model.ExitInternal
+		}
+		if err := output.WriteIssues(runner.options.Stderr, result.Warnings, result.Failures); err != nil {
+			return model.ExitInternal
+		}
+	}
+	if command.exitCode != nil {
+		return command.exitCode(result)
+	}
+	return output.ResultExitCode(result.Failures, nil)
+}
+
 func (runner *runner) runCreate(ctx context.Context) int {
 	command := runner.tree.Create
 	if err := validateOptionalValues(command.Repository); err != nil {
@@ -213,35 +251,26 @@ func (runner *runner) runCreate(ctx context.Context) int {
 		err := model.NewError(model.ErrorInvalidAgent, model.ExitInvalidArguments, "The agent ID must not be empty.", nil)
 		return runner.writeError("create", command.JSON, err)
 	}
-	service, err := runner.openService(ctx, command.JSON, command.BootstrapScript, command.NoBootstrap)
-	if err != nil {
-		return runner.writeError("create", command.JSON, err)
-	}
-	result, commandErr := service.Create(ctx, app.CreateOptions{
-		Name:        command.Name,
-		Repository:  optionalValue(command.Repository),
-		Branch:      optionalValue(command.Branch),
-		Base:        optionalValue(command.Base),
-		UseExisting: command.UseExisting,
-		Agent:       optionalValue(command.Agent),
+	return runServiceCommand(ctx, runner, serviceCommand[model.CreateData]{
+		name:            "create",
+		jsonMode:        command.JSON,
+		bootstrapScript: command.BootstrapScript,
+		noBootstrap:     command.NoBootstrap,
+		invoke: func(ctx context.Context, service *app.Service) (model.Result[model.CreateData], error) {
+			return service.Create(ctx, app.CreateOptions{
+				Name:        command.Name,
+				Repository:  optionalValue(command.Repository),
+				Branch:      optionalValue(command.Branch),
+				Base:        optionalValue(command.Base),
+				UseExisting: command.UseExisting,
+				Agent:       optionalValue(command.Agent),
+			})
+		},
+		writeHuman: output.WriteCreate,
+		exitCode: func(result model.Result[model.CreateData]) int {
+			return output.ResultExitCode(result.Failures, &result.Data.Bootstrap)
+		},
 	})
-	commandErr = closeService(service, commandErr)
-	if commandErr != nil {
-		return runner.writeError("create", command.JSON, commandErr)
-	}
-	if command.JSON {
-		if err := output.WriteJSON(runner.options.Stdout, result); err != nil {
-			return model.ExitInternal
-		}
-	} else {
-		if err := output.WriteCreate(runner.options.Stdout, result.Data); err != nil {
-			return model.ExitInternal
-		}
-		if err := output.WriteIssues(runner.options.Stderr, result.Warnings, result.Failures); err != nil {
-			return model.ExitInternal
-		}
-	}
-	return output.ResultExitCode(result.Failures, &result.Data.Bootstrap)
 }
 
 func (runner *runner) runList(ctx context.Context) int {
@@ -249,32 +278,18 @@ func (runner *runner) runList(ctx context.Context) int {
 	if err := validateOptionalValues(command.Repository); err != nil {
 		return runner.writeError("list", command.JSON, err)
 	}
-	service, err := runner.openService(ctx, command.JSON, nil, false)
-	if err != nil {
-		return runner.writeError("list", command.JSON, err)
-	}
-	result, commandErr := service.List(ctx, app.ListOptions{
-		Repository:  optionalValue(command.Repository),
-		All:         command.All,
-		RefreshSize: command.Refresh,
+	return runServiceCommand(ctx, runner, serviceCommand[model.ListData]{
+		name:     "list",
+		jsonMode: command.JSON,
+		invoke: func(ctx context.Context, service *app.Service) (model.Result[model.ListData], error) {
+			return service.List(ctx, app.ListOptions{
+				Repository:  optionalValue(command.Repository),
+				All:         command.All,
+				RefreshSize: command.Refresh,
+			})
+		},
+		writeHuman: output.WriteList,
 	})
-	commandErr = closeService(service, commandErr)
-	if commandErr != nil {
-		return runner.writeError("list", command.JSON, commandErr)
-	}
-	if command.JSON {
-		if err := output.WriteJSON(runner.options.Stdout, result); err != nil {
-			return model.ExitInternal
-		}
-	} else {
-		if err := output.WriteList(runner.options.Stdout, result.Data); err != nil {
-			return model.ExitInternal
-		}
-		if err := output.WriteIssues(runner.options.Stderr, result.Warnings, result.Failures); err != nil {
-			return model.ExitInternal
-		}
-	}
-	return output.ResultExitCode(result.Failures, nil)
 }
 
 func (runner *runner) runTouch(ctx context.Context) int {
@@ -282,31 +297,17 @@ func (runner *runner) runTouch(ctx context.Context) int {
 	if err := validateOptionalValues(command.Repository); err != nil {
 		return runner.writeError("touch", command.JSON, err)
 	}
-	service, err := runner.openService(ctx, command.JSON, nil, false)
-	if err != nil {
-		return runner.writeError("touch", command.JSON, err)
-	}
-	result, commandErr := service.Touch(ctx, app.TouchOptions{
-		Target:     command.Target,
-		Repository: optionalValue(command.Repository),
+	return runServiceCommand(ctx, runner, serviceCommand[model.TouchData]{
+		name:     "touch",
+		jsonMode: command.JSON,
+		invoke: func(ctx context.Context, service *app.Service) (model.Result[model.TouchData], error) {
+			return service.Touch(ctx, app.TouchOptions{
+				Target:     command.Target,
+				Repository: optionalValue(command.Repository),
+			})
+		},
+		writeHuman: output.WriteTouch,
 	})
-	commandErr = closeService(service, commandErr)
-	if commandErr != nil {
-		return runner.writeError("touch", command.JSON, commandErr)
-	}
-	if command.JSON {
-		if err := output.WriteJSON(runner.options.Stdout, result); err != nil {
-			return model.ExitInternal
-		}
-	} else {
-		if err := output.WriteTouch(runner.options.Stdout, result.Data); err != nil {
-			return model.ExitInternal
-		}
-		if err := output.WriteIssues(runner.options.Stderr, result.Warnings, result.Failures); err != nil {
-			return model.ExitInternal
-		}
-	}
-	return output.ResultExitCode(result.Failures, nil)
 }
 
 func (runner *runner) runStats(ctx context.Context) int {
@@ -314,32 +315,18 @@ func (runner *runner) runStats(ctx context.Context) int {
 	if err := validateOptionalValues(command.Repository); err != nil {
 		return runner.writeError("stats", command.JSON, err)
 	}
-	service, err := runner.openService(ctx, command.JSON, nil, false)
-	if err != nil {
-		return runner.writeError("stats", command.JSON, err)
-	}
-	result, commandErr := service.Stats(ctx, app.StatsOptions{
-		Repository: optionalValue(command.Repository),
-		All:        command.All,
-		Refresh:    command.Refresh,
+	return runServiceCommand(ctx, runner, serviceCommand[model.StatsData]{
+		name:     "stats",
+		jsonMode: command.JSON,
+		invoke: func(ctx context.Context, service *app.Service) (model.Result[model.StatsData], error) {
+			return service.Stats(ctx, app.StatsOptions{
+				Repository: optionalValue(command.Repository),
+				All:        command.All,
+				Refresh:    command.Refresh,
+			})
+		},
+		writeHuman: output.WriteStats,
 	})
-	commandErr = closeService(service, commandErr)
-	if commandErr != nil {
-		return runner.writeError("stats", command.JSON, commandErr)
-	}
-	if command.JSON {
-		if err := output.WriteJSON(runner.options.Stdout, result); err != nil {
-			return model.ExitInternal
-		}
-	} else {
-		if err := output.WriteStats(runner.options.Stdout, result.Data); err != nil {
-			return model.ExitInternal
-		}
-		if err := output.WriteIssues(runner.options.Stderr, result.Warnings, result.Failures); err != nil {
-			return model.ExitInternal
-		}
-	}
-	return output.ResultExitCode(result.Failures, nil)
 }
 
 func (runner *runner) runCleanup(ctx context.Context) int {
