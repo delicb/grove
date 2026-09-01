@@ -53,6 +53,62 @@ func TestWriteJSONError(t *testing.T) {
 	}
 }
 
+func TestWriteHumanErrorShowsSortedDetails(t *testing.T) {
+	domainErr := model.NewError(model.ErrorGit, model.ExitGit, "Git could not create the worktree.", errors.New("exit status 128"))
+	domainErr.Details["stderr"] = "fatal: could not create work tree\nhint: check the target path"
+	domainErr.Details["branch"] = "feature"
+	domainErr.Details["attempt"] = 2
+	var buffer bytes.Buffer
+	if err := WriteHumanError(&buffer, domainErr); err != nil {
+		t.Fatal(err)
+	}
+	want := "Error: Git could not create the worktree.\n" +
+		"  attempt: 2\n" +
+		"  branch: feature\n" +
+		"  stderr:\n" +
+		"    fatal: could not create work tree\n" +
+		"    hint: check the target path\n"
+	if buffer.String() != want {
+		t.Errorf("human error output = %q, want %q", buffer.String(), want)
+	}
+}
+
+func TestWriteHumanErrorShowsCauseWithoutDetails(t *testing.T) {
+	domainErr := model.NewError(model.ErrorInternal, model.ExitInternal, "Grove could not complete the command.", errors.New("unexpected failure"))
+	var buffer bytes.Buffer
+	if err := WriteHumanError(&buffer, domainErr); err != nil {
+		t.Fatal(err)
+	}
+	want := "Error: Grove could not complete the command.\n  cause: unexpected failure\n"
+	if buffer.String() != want {
+		t.Errorf("human error output = %q, want %q", buffer.String(), want)
+	}
+}
+
+func TestWriteHumanErrorPrefersDetailsOverCause(t *testing.T) {
+	domainErr := model.NewError(model.ErrorBranchExists, model.ExitConflict, "The branch exists.", errors.New("cause"))
+	domainErr.Details["branch"] = "feature"
+	var buffer bytes.Buffer
+	if err := WriteHumanError(&buffer, domainErr); err != nil {
+		t.Fatal(err)
+	}
+	want := "Error: The branch exists.\n  branch: feature\n"
+	if buffer.String() != want {
+		t.Errorf("human error output = %q, want %q", buffer.String(), want)
+	}
+}
+
+func TestWriteHumanErrorMessageOnly(t *testing.T) {
+	domainErr := model.NewError(model.ErrorInvalidAge, model.ExitInvalidArguments, "The age is not valid.", nil)
+	var buffer bytes.Buffer
+	if err := WriteHumanError(&buffer, domainErr); err != nil {
+		t.Fatal(err)
+	}
+	if buffer.String() != "Error: The age is not valid.\n" {
+		t.Errorf("human error output = %q", buffer.String())
+	}
+}
+
 func TestResultExitCodePriority(t *testing.T) {
 	failure := model.NewIssue(model.IssueSizeIncomplete, "incomplete", nil, nil)
 	bootstrap := model.BootstrapResult{State: model.BootstrapStateFailed}

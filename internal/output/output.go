@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -24,8 +25,44 @@ func WriteJSONError(writer io.Writer, command string, err error) error {
 }
 
 func WriteHumanError(writer io.Writer, err error) error {
-	_, writeErr := fmt.Fprintf(writer, "Error: %s\n", DomainError(err).Message)
-	return writeErr
+	domainErr := DomainError(err)
+	if _, writeErr := fmt.Fprintf(writer, "Error: %s\n", domainErr.Message); writeErr != nil {
+		return writeErr
+	}
+	if len(domainErr.Details) == 0 {
+		if domainErr.Err == nil {
+			return nil
+		}
+		return writeErrorDetail(writer, "cause", domainErr.Err)
+	}
+	keys := make([]string, 0, len(domainErr.Details))
+	for key := range domainErr.Details {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if writeErr := writeErrorDetail(writer, key, domainErr.Details[key]); writeErr != nil {
+			return writeErr
+		}
+	}
+	return nil
+}
+
+func writeErrorDetail(writer io.Writer, key string, value any) error {
+	formatted := fmt.Sprintf("%v", value)
+	if !strings.Contains(formatted, "\n") {
+		_, err := fmt.Fprintf(writer, "  %s: %s\n", key, formatted)
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "  %s:\n", key); err != nil {
+		return err
+	}
+	for _, line := range strings.Split(strings.TrimRight(formatted, "\n"), "\n") {
+		if _, err := fmt.Fprintf(writer, "    %s\n", line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func DomainError(err error) *model.Error {
