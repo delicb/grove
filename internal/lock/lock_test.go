@@ -2,6 +2,7 @@ package lock
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -212,6 +213,72 @@ func TestLockOwnerProcess(t *testing.T) {
 	fmt.Println("locked")
 	_, _ = os.Stdin.Read(make([]byte, 1))
 	runtime.KeepAlive(held)
+}
+
+func TestSweepOperationsRemovesOnlyStaleOperationFiles(t *testing.T) {
+	manager, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{"stale-one", "stale-two", "in-use"} {
+		released, err := manager.AcquireOperation(token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := released.Unlock(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held, err := manager.AcquireOperation("held-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := manager.AcquireBootstrap(42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := filepath.Join(manager.Directory(), "notes.txt")
+	if err := os.WriteFile(unrelated, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(manager.Directory(), "nested.lock")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	manager.SweepOperations(func(token string) bool { return token == "in-use" })
+
+	for _, name := range []string{"stale-one.lock", "stale-two.lock"} {
+		if _, err := os.Stat(filepath.Join(manager.Directory(), name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("stale lock file %q survived the sweep: %v", name, err)
+		}
+	}
+	for _, name := range []string{"in-use.lock", "held-token.lock", "bootstrap-42.lock", "notes.txt", "nested.lock"} {
+		if _, err := os.Stat(filepath.Join(manager.Directory(), name)); err != nil {
+			t.Errorf("kept file %q error = %v", name, err)
+		}
+	}
+	if !held.Owned() {
+		t.Error("held lock is not owned after the sweep")
+	}
+	if err := held.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSweepOperationsSurvivesMissingDirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "locks")
+	manager, err := NewManager(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		t.Fatal(err)
+	}
+	manager.SweepOperations(func(string) bool { return false })
 }
 
 func TestNewManagerRejectsSymlinkDirectory(t *testing.T) {

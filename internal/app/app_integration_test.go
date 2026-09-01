@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -640,6 +642,71 @@ func TestAbandonedCompletedRemovalRecoveryMarksRemoved(t *testing.T) {
 		t.Errorf("recovered removal state = %q", stored.State)
 	}
 	testutil.RunGit(t, repository.Path, "show-ref", "--verify", "refs/heads/completed-removal")
+}
+
+func TestRecoverSweepsStaleOperationLockFiles(t *testing.T) {
+	testutil.IsolateGit(t)
+	repository := testutil.NewRepository(t)
+	fixture := newAppFixture(t, repository.Path)
+	created, err := fixture.service.Create(context.Background(), CreateOptions{Name: "sweep-target", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lockDirectory := fixture.locks.Directory()
+	entries, err := os.ReadDir(lockDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleNames := []string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".lock") && !strings.HasPrefix(name, "bootstrap-") {
+			staleNames = append(staleNames, name)
+		}
+	}
+	if len(staleNames) == 0 {
+		t.Fatal("the completed create left no operation lock file")
+	}
+
+	held, err := fixture.locks.AcquireOperation("held-operation-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := fixture.locks.AcquireBootstrap(created.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	recoveryWarnings, err := fixture.service.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recoveryWarnings) != 0 {
+		t.Errorf("recovery warnings = %#v", recoveryWarnings)
+	}
+
+	for _, name := range staleNames {
+		if _, err := os.Stat(filepath.Join(lockDirectory, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("stale operation lock file %q survived recovery: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(lockDirectory, "held-operation-token.lock")); err != nil {
+		t.Errorf("held operation lock file error = %v", err)
+	}
+	bootstrapName := "bootstrap-" + strconv.FormatInt(created.Data.Worktree.ID, 10) + ".lock"
+	if _, err := os.Stat(filepath.Join(lockDirectory, bootstrapName)); err != nil {
+		t.Errorf("bootstrap lock file error = %v", err)
+	}
+	if !held.Owned() {
+		t.Error("held operation lock is not owned after recovery")
+	}
+	if err := held.Unlock(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRemovalRecoveryRejectsReplacementWorktrees(t *testing.T) {

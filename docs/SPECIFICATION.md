@@ -311,6 +311,8 @@ The lock file is `<data-dir>/locks/<token>.lock`. Grove gets the exclusive lock 
 
 The owner holds the lock until it commits a final operation state. Process exit releases the operating-system lock.
 
+At startup, Grove removes each operation lock file whose token has no incomplete operation and whose lock it can get without waiting. Grove removes the file before it releases the lock. Bootstrap lock files stay because their names repeat across runs.
+
 Grove writes a `creating` record and commits it before it runs `git worktree add`.
 
 After Git succeeds, Grove changes the record to `active`. A later database failure leaves a recoverable `creating` record.

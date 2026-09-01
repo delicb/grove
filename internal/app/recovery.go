@@ -25,6 +25,12 @@ func (service *Service) Recover(ctx context.Context) ([]model.Issue, error) {
 	for _, repository := range repositories {
 		repositoryByID[repository.ID] = repository
 	}
+	tokensInUse := make(map[string]struct{}, len(recoverable))
+	for _, worktree := range recoverable {
+		if worktree.OperationToken != nil {
+			tokensInUse[*worktree.OperationToken] = struct{}{}
+		}
+	}
 
 	for _, worktree := range recoverable {
 		if worktree.OperationToken == nil {
@@ -47,6 +53,11 @@ func (service *Service) Recover(ctx context.Context) ([]model.Issue, error) {
 		}
 		warnings = append(warnings, recoveryWarnings...)
 	}
+
+	service.locks.SweepOperations(func(token string) bool {
+		_, used := tokensInUse[token]
+		return used
+	})
 
 	bootstrapWarnings, err := service.recoverBootstrap(ctx)
 	if err != nil {
