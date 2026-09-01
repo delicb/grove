@@ -110,7 +110,7 @@ func (store *Store) CompleteCreate(ctx context.Context, id int64, token string, 
 		return errors.New("operation token must not be empty")
 	}
 	if gitWorktree.Path == "" {
-		return errors.New("Git worktree path must not be empty")
+		return errors.New("git worktree path must not be empty")
 	}
 	if err := validateGitPointers(gitWorktree.Branch, gitWorktree.DetachedCommit); err != nil {
 		return err

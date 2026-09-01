@@ -1,9 +1,10 @@
 GO ?= go
 BINARY ?= bin/grove
 COMMAND := ./cmd/grove
+STATICCHECK_VERSION ?= v0.7.0
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: all build install fmt fmt-check vet test test-race license-check check cross-build clean
+.PHONY: all build install fmt fmt-check vet staticcheck test test-race license-check check cross-build clean
 
 all: build
 
@@ -24,6 +25,9 @@ fmt-check:
 vet:
 	$(GO) vet ./...
 
+staticcheck:
+	$(GO) run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+
 test:
 	$(GO) test ./...
 
@@ -38,7 +42,7 @@ license-check:
 	@grep -Fq 'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND' LICENSE
 	@grep -Fq 'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER' LICENSE
 
-check: fmt-check vet test-race test license-check build
+check: fmt-check vet test-race license-check build
 
 cross-build:
 	@mkdir -p dist
