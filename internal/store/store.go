@@ -16,6 +16,13 @@ import (
 
 const databaseTimeLayout = "2006-01-02T15:04:05.000000000Z"
 
+// SQLite primary result codes: SQLITE_BUSY, SQLITE_LOCKED, and SQLITE_CONSTRAINT.
+const (
+	sqliteBusy       = 5
+	sqliteLocked     = 6
+	sqliteConstraint = 19
+)
+
 type Store struct {
 	db *sql.DB
 }
@@ -187,12 +194,12 @@ func isBusyError(err error) bool {
 		return false
 	}
 	code := sqliteError.Code() & 0xff
-	return code == 5 || code == 6
+	return code == sqliteBusy || code == sqliteLocked
 }
 
 func isConstraintError(err error) bool {
 	var sqliteError *sqlite.Error
-	return errors.As(err, &sqliteError) && sqliteError.Code()&0xff == 19
+	return errors.As(err, &sqliteError) && sqliteError.Code()&0xff == sqliteConstraint
 }
 
 func placeholders(count int) string {

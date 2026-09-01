@@ -41,10 +41,6 @@ func Resolve(explicit string, lookup LookupEnv) (string, error) {
 	return "human", nil
 }
 
-func Current(explicit string) (string, error) {
-	return Resolve(explicit, os.LookupEnv)
-}
-
 func Validate(value string) (string, error) {
 	if !utf8.ValidString(value) {
 		return "", invalidAgent("The agent ID must use valid UTF-8.")

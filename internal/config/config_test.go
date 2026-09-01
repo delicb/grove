@@ -43,7 +43,7 @@ func TestLoadDefaults(t *testing.T) {
 	if config.LockDir() != filepath.Join(config.DataDir, LocksDirectoryName) {
 		t.Errorf("LockDir() = %q", config.LockDir())
 	}
-	if !config.BootstrapEnabled() {
+	if config.BootstrapScript == "" {
 		t.Error("default bootstrap is disabled")
 	}
 }
@@ -263,7 +263,7 @@ bootstrap_script = "file-script"
 	if config.Root != filepath.Join(workingDirectory, "file-root") || config.RootSource != model.SourceConfig {
 		t.Errorf("root = %q from %q", config.Root, config.RootSource)
 	}
-	if config.BootstrapEnabled() || config.BootstrapScriptSource != model.SourceEnvironment {
+	if config.BootstrapScript != "" || config.BootstrapScriptSource != model.SourceEnvironment {
 		t.Errorf("bootstrap = %q from %q", config.BootstrapScript, config.BootstrapScriptSource)
 	}
 	if config.DataDir != filepath.Join(home, ".local", "share", "grove") {
@@ -276,7 +276,7 @@ bootstrap_script = "file-script"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.BootstrapEnabled() || config.BootstrapScriptSource != model.SourceConfig {
+	if config.BootstrapScript != "" || config.BootstrapScriptSource != model.SourceConfig {
 		t.Errorf("bootstrap = %q from %q", config.BootstrapScript, config.BootstrapScriptSource)
 	}
 
@@ -294,7 +294,7 @@ func TestNoBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.BootstrapEnabled() || config.BootstrapScriptSource != model.SourceDisabled {
+	if config.BootstrapScript != "" || config.BootstrapScriptSource != model.SourceDisabled {
 		t.Errorf("bootstrap = %q from %q", config.BootstrapScript, config.BootstrapScriptSource)
 	}
 

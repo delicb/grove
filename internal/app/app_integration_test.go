@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -640,6 +642,71 @@ func TestAbandonedCompletedRemovalRecoveryMarksRemoved(t *testing.T) {
 		t.Errorf("recovered removal state = %q", stored.State)
 	}
 	testutil.RunGit(t, repository.Path, "show-ref", "--verify", "refs/heads/completed-removal")
+}
+
+func TestRecoverSweepsStaleOperationLockFiles(t *testing.T) {
+	testutil.IsolateGit(t)
+	repository := testutil.NewRepository(t)
+	fixture := newAppFixture(t, repository.Path)
+	created, err := fixture.service.Create(context.Background(), CreateOptions{Name: "sweep-target", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lockDirectory := fixture.locks.Directory()
+	entries, err := os.ReadDir(lockDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleNames := []string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".lock") && !strings.HasPrefix(name, "bootstrap-") {
+			staleNames = append(staleNames, name)
+		}
+	}
+	if len(staleNames) == 0 {
+		t.Fatal("the completed create left no operation lock file")
+	}
+
+	held, err := fixture.locks.AcquireOperation("held-operation-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := fixture.locks.AcquireBootstrap(created.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bootstrap.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	recoveryWarnings, err := fixture.service.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recoveryWarnings) != 0 {
+		t.Errorf("recovery warnings = %#v", recoveryWarnings)
+	}
+
+	for _, name := range staleNames {
+		if _, err := os.Stat(filepath.Join(lockDirectory, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("stale operation lock file %q survived recovery: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(lockDirectory, "held-operation-token.lock")); err != nil {
+		t.Errorf("held operation lock file error = %v", err)
+	}
+	bootstrapName := "bootstrap-" + strconv.FormatInt(created.Data.Worktree.ID, 10) + ".lock"
+	if _, err := os.Stat(filepath.Join(lockDirectory, bootstrapName)); err != nil {
+		t.Errorf("bootstrap lock file error = %v", err)
+	}
+	if !held.Owned() {
+		t.Error("held operation lock is not owned after recovery")
+	}
+	if err := held.Unlock(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRemovalRecoveryRejectsReplacementWorktrees(t *testing.T) {
@@ -1406,6 +1473,162 @@ func TestCleanupChecksOperationLockImmediatelyBeforeGitRemoval(t *testing.T) {
 	}
 	if _, err := os.Stat(quarantinePath); err != nil {
 		t.Errorf("quarantined worktree path error = %v", err)
+	}
+}
+
+type sizeRefreshRaceStore struct {
+	Store
+	worktreeID int64
+	flip       func(context.Context) error
+	flipped    bool
+}
+
+func (racing *sizeRefreshRaceStore) UpdateSize(ctx context.Context, update store.SizeUpdate) error {
+	if update.WorktreeID == racing.worktreeID && !racing.flipped {
+		racing.flipped = true
+		if err := racing.flip(ctx); err != nil {
+			return err
+		}
+	}
+	return racing.Store.UpdateSize(ctx, update)
+}
+
+type sizeUpdateFailStore struct {
+	Store
+	worktreeID int64
+	failWith   error
+}
+
+func (failing *sizeUpdateFailStore) UpdateSize(ctx context.Context, update store.SizeUpdate) error {
+	if update.WorktreeID == failing.worktreeID {
+		return failing.failWith
+	}
+	return failing.Store.UpdateSize(ctx, update)
+}
+
+func findIssue(issues []model.Issue, code model.IssueCode) (model.Issue, bool) {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return issue, true
+		}
+	}
+	return model.Issue{}, false
+}
+
+func TestListRefreshSizeSkipsWorktreeReservedForRemoval(t *testing.T) {
+	testutil.IsolateGit(t)
+	repository := testutil.NewRepository(t)
+	fixture := newAppFixture(t, repository.Path)
+	skipped, err := fixture.service.Create(context.Background(), CreateOptions{Name: "refresh-skipped", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := fixture.service.Create(context.Background(), CreateOptions{Name: "refresh-kept", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Data.Worktree.SizeMeasuredAt == nil {
+		t.Fatalf("created worktree has no size measurement: %#v", skipped.Data.Worktree)
+	}
+	gitDirectory := worktreeGitDirectory(t, fixture, skipped.Data.Worktree.Path)
+	fixture.now = fixture.now.Add(31 * 24 * time.Hour)
+	fixture.service.store = &sizeRefreshRaceStore{
+		Store:      fixture.store,
+		worktreeID: skipped.Data.Worktree.ID,
+		flip: func(ctx context.Context) error {
+			_, err := fixture.store.ReserveRemoval(ctx, store.RemoveReservation{
+				WorktreeID:         skipped.Data.Worktree.ID,
+				OperationToken:     "refresh-race-token",
+				OperationStartedAt: fixture.now,
+				ObservedActivityAt: skipped.Data.Worktree.LastGroveActivityAt,
+				CutoffAt:           fixture.now.Add(-30 * 24 * time.Hour),
+				Reason:             model.RemovalReasonOldAndClean,
+				GitDirectory:       gitDirectory,
+			})
+			return err
+		},
+	}
+
+	result, err := fixture.service.List(context.Background(), ListOptions{RefreshSize: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warning, found := findIssue(result.Warnings, model.IssueSizeRefreshSkipped)
+	if !found || warning.Path == nil || *warning.Path != skipped.Data.Worktree.Path ||
+		warning.WorktreeID == nil || *warning.WorktreeID != skipped.Data.Worktree.ID {
+		t.Errorf("size refresh warning = %#v, %t", warning, found)
+	}
+	listed := map[int64]model.Worktree{}
+	for _, worktree := range result.Data.Worktrees {
+		listed[worktree.ID] = worktree
+	}
+	skippedRow := listed[skipped.Data.Worktree.ID]
+	if skippedRow.SizeMeasuredAt == nil || !skippedRow.SizeMeasuredAt.Equal(*skipped.Data.Worktree.SizeMeasuredAt) {
+		t.Errorf("skipped measurement time = %v, want %v", skippedRow.SizeMeasuredAt, skipped.Data.Worktree.SizeMeasuredAt)
+	}
+	keptRow := listed[kept.Data.Worktree.ID]
+	if keptRow.SizeMeasuredAt == nil || !keptRow.SizeMeasuredAt.Equal(fixture.now) {
+		t.Errorf("kept measurement time = %v, want %v", keptRow.SizeMeasuredAt, fixture.now)
+	}
+	stored, err := fixture.store.Get(context.Background(), skipped.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != model.WorktreeStateRemoving {
+		t.Errorf("skipped worktree state = %q", stored.State)
+	}
+	if stored.SizeMeasuredAt == nil || !stored.SizeMeasuredAt.Equal(*skipped.Data.Worktree.SizeMeasuredAt) {
+		t.Errorf("stored skipped measurement time = %v, want %v", stored.SizeMeasuredAt, skipped.Data.Worktree.SizeMeasuredAt)
+	}
+}
+
+func TestStatsRefreshSkipsWorktreeThatLeftActiveState(t *testing.T) {
+	testutil.IsolateGit(t)
+	repository := testutil.NewRepository(t)
+	fixture := newAppFixture(t, repository.Path)
+	skipped, err := fixture.service.Create(context.Background(), CreateOptions{Name: "stats-skipped", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := fixture.service.Create(context.Background(), CreateOptions{Name: "stats-kept", Agent: "pi:test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped.Data.Worktree.SizeMeasuredAt == nil {
+		t.Fatalf("created worktree has no size measurement: %#v", skipped.Data.Worktree)
+	}
+	fixture.service.store = &sizeUpdateFailStore{
+		Store:      fixture.store,
+		worktreeID: skipped.Data.Worktree.ID,
+		failWith:   store.ErrNotFound,
+	}
+	fixture.now = fixture.now.Add(time.Hour)
+
+	result, err := fixture.service.Stats(context.Background(), StatsOptions{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warning, found := findIssue(result.Warnings, model.IssueSizeRefreshSkipped)
+	if !found || warning.Path == nil || *warning.Path != skipped.Data.Worktree.Path ||
+		warning.WorktreeID == nil || *warning.WorktreeID != skipped.Data.Worktree.ID {
+		t.Errorf("size refresh warning = %#v, %t", warning, found)
+	}
+	if result.Data.Active != 2 {
+		t.Errorf("active count = %d", result.Data.Active)
+	}
+	storedSkipped, err := fixture.store.Get(context.Background(), skipped.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedSkipped.SizeMeasuredAt == nil || !storedSkipped.SizeMeasuredAt.Equal(*skipped.Data.Worktree.SizeMeasuredAt) {
+		t.Errorf("skipped measurement time = %v, want %v", storedSkipped.SizeMeasuredAt, skipped.Data.Worktree.SizeMeasuredAt)
+	}
+	storedKept, err := fixture.store.Get(context.Background(), kept.Data.Worktree.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedKept.SizeMeasuredAt == nil || !storedKept.SizeMeasuredAt.Equal(fixture.now) {
+		t.Errorf("kept measurement time = %v, want %v", storedKept.SizeMeasuredAt, fixture.now)
 	}
 }
 

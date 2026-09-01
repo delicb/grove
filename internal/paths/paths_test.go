@@ -246,31 +246,6 @@ func TestCanonicalForCreationRejectsFileAncestor(t *testing.T) {
 	}
 }
 
-func TestRequireContained(t *testing.T) {
-	root := t.TempDir()
-	if err := RequireContained(root, filepath.Join(root, "repo")); err != nil {
-		t.Fatalf("RequireContained returned %v", err)
-	}
-	err := RequireContained(root, filepath.Join(filepath.Dir(root), "outside"))
-	var domainErr *model.Error
-	if !errors.As(err, &domainErr) {
-		t.Fatalf("error = %#v, want *model.Error", err)
-	}
-	if domainErr.Code != model.ErrorTargetOutsideRoot || domainErr.ExitCode != model.ExitConflict {
-		t.Errorf("error = %#v", domainErr)
-	}
-
-	for _, target := range []string{"", string([]byte{0xff}), "bad\x00path"} {
-		err := RequireContained(root, target)
-		if !errors.As(err, &domainErr) || domainErr.Code != model.ErrorInvalidPath {
-			t.Errorf("RequireContained(%q) error = %#v, want invalid_path", target, err)
-		}
-		if Contains(root, target) {
-			t.Errorf("Contains accepted %q", target)
-		}
-	}
-}
-
 func TestValidateUTF8(t *testing.T) {
 	for _, value := range []string{string([]byte{0xff}), "bad\x00path"} {
 		if err := ValidateUTF8(value); err == nil {

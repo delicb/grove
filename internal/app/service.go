@@ -222,6 +222,18 @@ func (service *Service) startup(ctx context.Context, reconcile bool) ([]model.Is
 	return append(warnings, reconcileWarnings...), nil
 }
 
+func (service *Service) repositoriesByID(ctx context.Context, errorMessage string) (map[int64]model.Repository, error) {
+	repositoryList, err := service.store.Repositories(ctx, store.RepositoryFilter{})
+	if err != nil {
+		return nil, storeError(errorMessage, err)
+	}
+	repositories := make(map[int64]model.Repository, len(repositoryList))
+	for _, repository := range repositoryList {
+		repositories[repository.ID] = repository
+	}
+	return repositories, nil
+}
+
 func (service *Service) now() time.Time {
 	return service.clock().UTC()
 }
@@ -255,6 +267,17 @@ func storeError(message string, err error) error {
 		return model.NewError(model.ErrorWorktreeConflict, model.ExitConflict, message, err)
 	}
 	return databaseError(message, err)
+}
+
+func sizeRefreshSkippedIssue(worktree model.Worktree) model.Issue {
+	path := worktree.Path
+	id := worktree.ID
+	return model.NewIssue(
+		model.IssueSizeRefreshSkipped,
+		"The worktree changed state during the size refresh.",
+		&path,
+		&id,
+	)
 }
 
 func addIssues(resultWarnings *[]model.Issue, resultFailures *[]model.Issue, worktree model.Worktree, warnings []model.Issue, complete bool) {

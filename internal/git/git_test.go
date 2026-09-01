@@ -300,7 +300,7 @@ func TestRefBranchAddStatusAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.Clean(false) {
+	if status != (model.WorktreeStatus{}) {
 		t.Errorf("new worktree status = %#v", status)
 	}
 	writeFile(t, filepath.Join(target, "staged.txt"), "staged\n")

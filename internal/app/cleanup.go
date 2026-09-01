@@ -76,7 +76,7 @@ func (service *Service) Cleanup(ctx context.Context, options CleanupOptions) (mo
 		return result, err
 	}
 	result.Warnings = append(result.Warnings, warnings...)
-	repositories, err := service.cleanupRepositories(ctx)
+	repositories, err := service.repositoriesByID(ctx, "Grove could not read repositories for cleanup.")
 	if err != nil {
 		return result, err
 	}
@@ -105,23 +105,11 @@ func (service *Service) ExecuteCleanupPlan(
 		return result, err
 	}
 	result.Warnings = append(result.Warnings, warnings...)
-	repositories, err := service.cleanupRepositories(ctx)
+	repositories, err := service.repositoriesByID(ctx, "Grove could not read repositories for cleanup.")
 	if err != nil {
 		return result, err
 	}
 	return service.executeCleanup(ctx, options, result, repositories)
-}
-
-func (service *Service) cleanupRepositories(ctx context.Context) (map[int64]model.Repository, error) {
-	repositoryList, err := service.store.Repositories(ctx, store.RepositoryFilter{})
-	if err != nil {
-		return nil, storeError("Grove could not read repositories for cleanup.", err)
-	}
-	repositories := make(map[int64]model.Repository, len(repositoryList))
-	for _, repository := range repositoryList {
-		repositories[repository.ID] = repository
-	}
-	return repositories, nil
 }
 
 func (service *Service) executeCleanup(
@@ -193,13 +181,9 @@ func (service *Service) planCleanup(ctx context.Context, options CleanupOptions)
 	if err != nil {
 		return result, nil, storeError("Grove could not read worktrees for cleanup.", err)
 	}
-	repositoryList, err := service.store.Repositories(ctx, store.RepositoryFilter{})
+	repositories, err := service.repositoriesByID(ctx, "Grove could not read repositories for cleanup.")
 	if err != nil {
-		return result, nil, storeError("Grove could not read repositories for cleanup.", err)
-	}
-	repositories := make(map[int64]model.Repository, len(repositoryList))
-	for _, repository := range repositoryList {
-		repositories[repository.ID] = repository
+		return result, nil, err
 	}
 
 	for _, worktree := range worktrees {

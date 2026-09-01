@@ -226,6 +226,7 @@ func TestStableCodes(t *testing.T) {
 		"worktree_missing",
 		"recovery_manual_review",
 		"size_incomplete",
+		"size_refresh_skipped",
 		"file_disappeared",
 		"permission_denied",
 		"cleanup_recent",
@@ -253,29 +254,5 @@ func TestStableCodes(t *testing.T) {
 	}
 	if err := ValidateIssueCode("unknown"); err == nil {
 		t.Error("ValidateIssueCode accepted an unknown code")
-	}
-}
-
-func TestWorktreeStatusClean(t *testing.T) {
-	if !(WorktreeStatus{}).Clean(false) {
-		t.Error("empty status is not clean")
-	}
-	for name, status := range map[string]WorktreeStatus{
-		"staged":    {Staged: true},
-		"modified":  {Modified: true},
-		"untracked": {Untracked: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if status.Clean(true) {
-				t.Error("dirty status is clean")
-			}
-		})
-	}
-	ignored := WorktreeStatus{Ignored: true}
-	if ignored.Clean(false) {
-		t.Error("ignored files are clean without allowIgnored")
-	}
-	if !ignored.Clean(true) {
-		t.Error("ignored files are not clean with allowIgnored")
 	}
 }

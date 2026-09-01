@@ -311,6 +311,8 @@ The lock file is `<data-dir>/locks/<token>.lock`. Grove gets the exclusive lock 
 
 The owner holds the lock until it commits a final operation state. Process exit releases the operating-system lock.
 
+At startup, Grove removes each operation lock file whose token has no incomplete operation and whose lock it can get without waiting. Grove removes the file before it releases the lock. Bootstrap lock files stay because their names repeat across runs.
+
 Grove writes a `creating` record and commits it before it runs `git worktree add`.
 
 After Git succeeds, Grove changes the record to `active`. A later database failure leaves a recoverable `creating` record.
@@ -530,6 +532,8 @@ The human table contains:
 
 `--refresh-size` measures each active worktree before output. Without it, Grove uses the cached value.
 
+If a worktree leaves the active state during the refresh, Grove keeps its cached value, records a `size_refresh_skipped` warning, and continues.
+
 A missing measurement displays an unknown value.
 
 The list summary counts each shown state. Only active worktrees contribute to its size total.
@@ -574,7 +578,7 @@ Default stats report:
 
 `--all` also reports removed and create-failed counts. Final records do not affect repository count or size.
 
-`--refresh` measures active worktrees before calculation.
+`--refresh` measures active worktrees before calculation. If a worktree leaves the active state during the refresh, Grove records a `size_refresh_skipped` warning and continues.
 
 A cached total is complete when every active worktree has a complete stored measurement. Cached measurements do not have a freshness promise.
 
@@ -783,6 +787,7 @@ Warning and failure codes are:
 - `worktree_missing`
 - `recovery_manual_review`
 - `size_incomplete`
+- `size_refresh_skipped`
 - `file_disappeared`
 - `permission_denied`
 - `cleanup_recent`

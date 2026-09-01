@@ -14,15 +14,16 @@ import (
 )
 
 const (
-	lockDirectoryMode = 0o700
-	lockFileMode      = 0o600
-	maxTokenBytes     = 200
+	lockDirectoryMode   = 0o700
+	lockFileMode        = 0o600
+	maxTokenBytes       = 200
+	lockFileSuffix      = ".lock"
+	bootstrapLockPrefix = "bootstrap-"
 )
 
 type Lock interface {
 	Unlock() error
 	Owned() bool
-	Locked() bool
 	Path() string
 }
 
@@ -31,6 +32,7 @@ type Manager interface {
 	TryOperation(token string) (Lock, bool, error)
 	AcquireBootstrap(worktreeID int64) (Lock, error)
 	TryBootstrap(worktreeID int64) (Lock, bool, error)
+	SweepOperations(inUse func(token string) bool)
 }
 
 type FileManager struct {
@@ -75,10 +77,6 @@ func NewManager(directory string) (*FileManager, error) {
 	return &FileManager{directory: filepath.Clean(canonical)}, nil
 }
 
-func New(directory string) (*FileManager, error) {
-	return NewManager(directory)
-}
-
 func (manager *FileManager) Directory() string {
 	return manager.directory
 }
@@ -87,14 +85,14 @@ func (manager *FileManager) OperationPath(token string) (string, error) {
 	if err := validateToken(token); err != nil {
 		return "", err
 	}
-	return filepath.Join(manager.directory, token+".lock"), nil
+	return filepath.Join(manager.directory, token+lockFileSuffix), nil
 }
 
 func (manager *FileManager) BootstrapPath(worktreeID int64) (string, error) {
 	if worktreeID <= 0 {
 		return "", fmt.Errorf("worktree ID must be positive")
 	}
-	return filepath.Join(manager.directory, "bootstrap-"+strconv.FormatInt(worktreeID, 10)+".lock"), nil
+	return filepath.Join(manager.directory, bootstrapLockPrefix+strconv.FormatInt(worktreeID, 10)+lockFileSuffix), nil
 }
 
 func (manager *FileManager) AcquireOperation(token string) (Lock, error) {
@@ -127,6 +125,43 @@ func (manager *FileManager) TryBootstrap(worktreeID int64) (Lock, bool, error) {
 		return nil, false, err
 	}
 	return tryAcquire(path)
+}
+
+func (manager *FileManager) SweepOperations(inUse func(token string) bool) {
+	entries, err := os.ReadDir(manager.directory)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		token, sweepable := operationLockToken(entry)
+		if !sweepable {
+			continue
+		}
+		if inUse != nil && inUse(token) {
+			continue
+		}
+		held, acquired, err := manager.TryOperation(token)
+		if err != nil || !acquired {
+			continue
+		}
+		_ = os.Remove(filepath.Join(manager.directory, entry.Name()))
+		_ = held.Unlock()
+	}
+}
+
+func operationLockToken(entry os.DirEntry) (string, bool) {
+	if !entry.Type().IsRegular() {
+		return "", false
+	}
+	name := entry.Name()
+	if !strings.HasSuffix(name, lockFileSuffix) || strings.HasPrefix(name, bootstrapLockPrefix) {
+		return "", false
+	}
+	token := strings.TrimSuffix(name, lockFileSuffix)
+	if validateToken(token) != nil {
+		return "", false
+	}
+	return token, true
 }
 
 type fileLock struct {
@@ -177,10 +212,6 @@ func (lock *fileLock) Owned() bool {
 	lock.mu.Lock()
 	defer lock.mu.Unlock()
 	return lock.owned && lock.flock.Locked()
-}
-
-func (lock *fileLock) Locked() bool {
-	return lock.Owned()
 }
 
 func (lock *fileLock) Path() string {
