@@ -1,6 +1,7 @@
 GO ?= go
 BINARY ?= bin/grove
 COMMAND := ./cmd/grove
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: all build install fmt fmt-check vet test test-race license-check check cross-build clean
 
@@ -8,10 +9,10 @@ all: build
 
 build:
 	@mkdir -p "$(dir $(BINARY))"
-	CGO_ENABLED=0 $(GO) build -trimpath -o "$(BINARY)" $(COMMAND)
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o "$(BINARY)" $(COMMAND)
 
 install:
-	CGO_ENABLED=0 $(GO) install $(COMMAND)
+	CGO_ENABLED=0 $(GO) install -ldflags "-X main.version=$(VERSION)" $(COMMAND)
 
 fmt:
 	@find . -type f -name '*.go' -not -path './vendor/*' -exec gofmt -w {} +
@@ -46,7 +47,7 @@ cross-build:
 		os="$${target%/*}"; \
 		arch="$${target#*/}"; \
 		printf 'Building %s/%s\n' "$$os" "$$arch"; \
-		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" $(GO) build -trimpath -o "dist/grove-$$os-$$arch" $(COMMAND); \
+		CGO_ENABLED=0 GOOS="$$os" GOARCH="$$arch" $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o "dist/grove-$$os-$$arch" $(COMMAND); \
 	done
 	cp LICENSE THIRD_PARTY_NOTICES.md dist/
 	mkdir -p dist/skills/grove-worktrees

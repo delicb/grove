@@ -40,6 +40,33 @@ func TestVersionDoesNotLoadConfiguration(t *testing.T) {
 	}
 }
 
+func TestVersionFlagWritesVersionToStandardOutput(t *testing.T) {
+	home := t.TempDir()
+	dataHome := filepath.Join(home, "data")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	exitCode := Run(context.Background(), []string{"--version"}, Options{
+		Stdin:   strings.NewReader(""),
+		Stdout:  stdout,
+		Stderr:  stderr,
+		Version: "0.5.0-test",
+	})
+	if exitCode != model.ExitSuccess {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	if stdout.String() != "grove 0.5.0-test\n" {
+		t.Errorf("stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dataHome, "grove", "grove.db")); !os.IsNotExist(err) {
+		t.Errorf("version flag created a database: %v", err)
+	}
+}
+
 func TestConfigCommandsDoNotCreateDataDirectory(t *testing.T) {
 	home := t.TempDir()
 	dataHome := filepath.Join(home, "xdg-data")
